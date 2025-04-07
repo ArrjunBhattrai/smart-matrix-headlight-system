@@ -1,133 +1,148 @@
 import cv2
 import time
-import math
 import serial
 import threading
 from ultralytics import YOLO
 
-# Set up serial communication (change 'COM3' to match your Arduino port)
-ser = serial.Serial('COM3', 9600, timeout=1)
-time.sleep(2)  # Allow time for serial connection to establish
+# Serial setup
+try:
+    ser = serial.Serial('COM3', 9600, timeout=1)
+    time.sleep(2)
+    print(f"✅ Serial connected: {ser.is_open}")
+except Exception as e:
+    print(f" Serial connection failed: {e}")
+    exit()
 
 # Load YOLO model
-model = YOLO("yolov8n.pt")  # Ensure you have yolov8n.pt
+model = YOLO("yolov8n.pt")
 
-# Camera Parameters
-FOV = 60  # Camera Field of View in degrees
-FRAME_WIDTH = 720  # Camera frame width in pixels
-KNOWN_WIDTH = 0.075  # Actual width of the object (car) in meters
-FOCAL_LENGTH = 440  # Calibrated focal length
+# Camera settings
+FOV = 60
+FRAME_WIDTH = 720
+KNOWN_WIDTH = 0.075  # meters
+FOCAL_LENGTH = 440
 
-# LED Setup
-NUM_LEDS = 10  # Total LEDs (5 left + 5 right)
-LED_SPACING = 0.015  # 1.5 cm = 0.015m between each LED
-LED_CENTER = 5  # Middle LEDs (between 5th and 6th)
+# Global variables for threading
+letter_to_send = "X"
+last_sent_time = 0
+running = True
 
-cap = cv2.VideoCapture(0)  # Open the camera
+# Open video feed
+cap = cv2.VideoCapture(0)
 cap.set(3, FRAME_WIDTH)
 cap.set(4, 640)
 
-running = True  # Flag for thread execution
-last_sent_time = 0  # Avoid sending redundant data
-object_detected = False  # Track if any car is detected
+if not cap.isOpened():
+    print("❌ Camera not accessible")
+    exit()
+else:
+    print("🎥 Camera feed started")
 
+# Function to determine which letter to send
+def get_letter_to_send(distance, angle):
+    distance_cm = distance * 100
 
-# Thread to send data to Arduino
+    if distance_cm > 20:
+        return 'X'
+
+    if distance_cm <= 10:
+        if -5 <= angle <= 5:
+            return 'A'
+        elif -10 <= angle < -5:
+            return 'B'
+        elif angle < -10:
+            return 'C'
+        elif 5 < angle <= 10:
+            return 'D'
+        elif angle > 10:
+            return 'E'
+
+    elif 10 < distance_cm <= 15:
+        if -5 <= angle <= 5:
+            return 'F'
+        elif -10 <= angle < -5:
+            return 'G'
+        elif angle < -10:
+            return 'H'
+        elif 5 < angle <= 10:
+            return 'I'
+        elif angle > 10:
+            return 'J'
+
+    elif 15 < distance_cm <= 20:
+        if -5 <= angle <= 5:
+            return 'K'
+        elif -10 <= angle < -5:
+            return 'L'
+        elif angle < -10:
+            return 'M'
+        elif 5 < angle <= 10:
+            return 'N'
+        elif angle > 10:
+            return 'O'
+
+    return 'X'
+
+# Background thread for sending data periodically
 def send_data():
-    global object_detected, last_sent_time
+    global letter_to_send, last_sent_time
     while running:
         current_time = time.time()
-
-        if object_detected:
-            message = object_detected  # Example: "OFF:3,4,5"
-        else:
-            message = "OFF:none\n"  # No car detected → All LEDs ON
-
-        if ser.is_open:
+        if ser.is_open and (current_time - last_sent_time > 0.2):
             try:
-                if current_time - last_sent_time > 0.2:  # 50ms interval
-                    ser.write(message.encode())
-                    print(f"Sent to Arduino: {message.strip()}")
-                    last_sent_time = current_time
-            except:
-                print("Serial communication error")
+                ser.write(letter_to_send.encode())
+                print(f"[Thread] Sent to Arduino: {letter_to_send}")
+                last_sent_time = current_time
+            except Exception as e:
+                print(f"[Thread] Serial communication error: {e}")
+        time.sleep(0.05)
 
-        time.sleep(0.05)  # Send data every 50ms
-
-
-# Start the serial communication thread
+# Start thread
 thread = threading.Thread(target=send_data, daemon=True)
 thread.start()
+print(f"Thread started: {thread.is_alive()}")
 
+# Main loop
 while cap.isOpened():
     ret, frame = cap.read()
     if not ret:
-        print("Error: Failed to capture frame")
+        print("Failed to grab frame")
         break
 
-    results = model(frame)  # Run YOLO detection
-    detected_distance = 0
-    detected_angle = 0
-    car_detected = False
-    message_to_send = "OFF:none\n"  # Default to no LEDs OFF
+    results = model(frame)
+    temp_letter = "X"
 
     for result in results:
         for box in result.boxes:
-            cls = int(box.cls[0])  # Get class index
-            obj_name = model.names[cls]  # Get object name
+            cls = int(box.cls[0])
+            obj_name = model.names[cls]
 
-            if obj_name == "car":  # Only process car detection
-                x1, _, x2, _ = map(int, box.xyxy[0])  # Bounding box
-                obj_width_px = x2 - x1  # Width of car in pixels
+            if obj_name == "car":
+                x1, _, x2, _ = map(int, box.xyxy[0])
+                obj_width_px = x2 - x1
 
-                # Calculate Distance
                 if obj_width_px > 0:
-                    detected_distance = (KNOWN_WIDTH * FOCAL_LENGTH) / obj_width_px
+                    distance = (KNOWN_WIDTH * FOCAL_LENGTH) / obj_width_px
                 else:
-                    detected_distance = 0
+                    distance = 0
 
-                # Calculate Angle
                 x_center = (x1 + x2) / 2
                 X_mid = FRAME_WIDTH / 2
-                detected_angle = ((x_center - X_mid) / X_mid) * (FOV / 2)
+                angle = ((x_center - X_mid) / X_mid) * (FOV / 2)
 
-                # Calculate Lateral Displacement
-                lateral_displacement = detected_distance * math.tan(math.radians(detected_angle))
+                temp_letter = get_letter_to_send(distance, angle)
 
-                # Determine LED in front of the car
-                led_index = round((lateral_displacement / LED_SPACING)) + LED_CENTER
-                led_index = max(1, min(NUM_LEDS, led_index))  # Keep it within 1-10 range
 
-                # Determine how many LEDs to turn off based on distance
-                if detected_distance < 0.05:  # If car is too close, turn off 7 LEDs
-                    led_range = 7
-                elif detected_distance < 0.15:  # If car is near (0.05m to 0.15m), turn off 5 LEDs
-                    led_range = 5
-                else:  # If car is far (>0.15m), turn off only 2 LEDs
-                    led_range = 2
-
-                # Get the affected LED range
-                left_led_index = max(1, led_index - (led_range // 2))
-                right_led_index = min(NUM_LEDS, led_index + (led_range // 2))
-
-                # Generate LED OFF message
-                leds_to_turn_off = [i for i in range(left_led_index, right_led_index + 1)]
-                message_to_send = f"OFF:{','.join(map(str, leds_to_turn_off))}\n"
-
-                # Draw bounding box
+                # Draw on frame
                 cv2.rectangle(frame, (x1, 50), (x2, 100), (0, 255, 0), 2)
-                cv2.putText(frame, f"Dist: {detected_distance:.2f}m, Angle: {detected_angle:.2f}°",
+                cv2.putText(frame, f"{temp_letter} | D: {distance*100:.1f}cm, A: {angle:.1f}°",
                             (x1, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
 
-                car_detected = True
+    # Update global letter
+    letter_to_send = temp_letter
 
-    # Send Data to Arduino
-    object_detected = message_to_send if car_detected else "OFF:none\n"  # Update for serial thread
-    print(
-        f"Car Detected: {car_detected}, Distance: {detected_distance:.2f}m, Angle: {detected_angle:.2f}°, LEDs OFF: {object_detected.strip()}")
+    cv2.imshow("Car Detection", frame)
 
-    # Show camera output
-    cv2.imshow("YOLOv8 Car Detection", frame)
     if cv2.waitKey(1) & 0xFF == ord('q'):
         running = False
         break
@@ -137,3 +152,4 @@ cap.release()
 cv2.destroyAllWindows()
 ser.close()
 thread.join()
+print("Clean exit. Program terminated.")
