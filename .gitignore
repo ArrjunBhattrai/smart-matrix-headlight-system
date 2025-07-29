@@ -1,0 +1,50 @@
+# Python cache and compiled files
+__pycache__/
+*.py[cod]
+*.so
+*.pyd
+*.log
+
+# Jupyter and VS Code junk (if ever used)
+.ipynb_checkpoints/
+.vscode/
+.env
+.env.*
+
+# YOLO model weights (e.g., yolov5s.pt)
+*.pt
+*.onnx
+*.tflite
+
+# Video files or large test data
+*.mp4
+*.avi
+*.mov
+
+# OS/Editor temp files
+.DS_Store
+Thumbs.db
+*.swp
+*.tmp
+
+# Arduino compiled files (optional)
+*.hex
+*.elf
+
+# PlatformIO (if used)
+.pio/
+platformio.ini
+
+# Build folders (if using Arduino CLI)
+build/
+
+# Personal settings
+*.code-workspace
+*.idea/
+
+# Optional: Exclude test results/output
+output/
+results/
+
+# Virtual environment
+.venv/
